@@ -1,0 +1,141 @@
+name: Build VoltageOS (shipu07) fogos Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Motorola-SM6375-Devs Kernel Branch'
+        required: true
+        default: 'fifteen'
+        type: choice
+        options:
+          - fifteen
+          - sixteen
+          - fourteen
+      ksu_branch:
+        description: 'KernelSU-Next Branch'
+        required: true
+        default: 'next'
+      enable_susfs:
+        description: 'Enable SuSFS Stealth Patch'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: Build VoltageOS fogos Kernel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Maximize Disk Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Install Toolchain Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison ca-certificates ccache clang flex gcc git gnupg \
+            libelf-dev libssl-dev lld make ninja-build python3 tar unzip zip zlib1g-dev
+
+      - name: Download AOSP Clang (r487747c)
+        run: |
+          mkdir -p clang
+          curl -LSs "https://kali.download/nethunter-images/toolchains/clang-r487747c.tar.gz" | tar -xz -C clang
+
+      - name: Clone shipu07 / Motorola-SM6375-Devs Kernel Tree
+        run: |
+          git clone --depth=1 https://github.com/Motorola-SM6375-Devs/android_kernel_motorola_sm6375.git -b "${{ github.event.inputs.branch }}" kernel
+          cd kernel
+
+      - name: Inject KernelSU-Next & SuSFS
+        run: |
+          cd kernel
+          # Setup KernelSU-Next
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/${{ github.event.inputs.ksu_branch }}/kernel/setup.sh" | bash -
+
+          # Setup SuSFS Stealth Layer
+          if [ "${{ github.event.inputs.enable_susfs }}" = "true" ]; then
+            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android14-5.4 susfs
+            cp -r susfs/kernel_patches/* ./
+            patch -p1 < susfs/kernel_patches/5.4/0001-kernel-5.4-susfs.patch || true
+          fi
+
+      - name: Inject Custom Configurations (LZ4, FullLTO, EROFS, BBR, WireGuard)
+        run: |
+          cd kernel
+          DEFCONFIG="arch/arm64/configs/vendor/fogos_defconfig"
+          [ ! -f "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/moto-holi-fogos.config"
+          [ ! -f "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/holi-perf_defconfig"
+
+          cat << 'EOF' >> "$DEFCONFIG"
+          # Networking: Google BBR & WireGuard
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_DEFAULT_BBR=y
+          CONFIG_WIREGUARD=y
+
+          # Memory: LZ4 for ZRAM
+          CONFIG_ZRAM=y
+          CONFIG_CRYPTO_LZ4=y
+          CONFIG_LZ4_COMPRESS=y
+          CONFIG_LZ4_DECOMPRESS=y
+          CONFIG_ZRAM_DEF_COMP_LZ4=y
+
+          # Optimization: Full LTO
+          CONFIG_LTO=y
+          CONFIG_LTO_CLANG=y
+          CONFIG_LTO_CLANG_FULL=y
+          # CONFIG_LTO_CLANG_THIN is not set
+
+          # Filesystems: EROFS Optimization & OverlayFS
+          CONFIG_OVERLAY_FS=y
+          CONFIG_EROFS_FS=y
+          CONFIG_EROFS_FS_ZIP=y
+          CONFIG_EROFS_FS_LZ4=y
+          CONFIG_EROFS_FS_PCPU_KTHREAD=y
+          EOF
+
+      - name: Compile VoltageOS Kernel
+        run: |
+          cd kernel
+          export PATH="$(pwd)/../clang/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CC="clang"
+          export LD="ld.lld"
+          export AR="llvm-ar"
+          export NM="llvm-nm"
+          export OBJCOPY="llvm-objcopy"
+          export OBJDUMP="llvm-objdump"
+          export STRIP="llvm-strip"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          make O=out vendor/fogos_defconfig || make O=out vendor/moto-holi-fogos.config || make O=out vendor/holi-perf_defconfig
+          make -j$(nproc --all) O=out Image.gz-dtb || make -j$(nproc --all) O=out Image
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
+          sed -i 's/device.name1=.*/device.name1=fogos/' AnyKernel3/anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=moto g34 5G/' AnyKernel3/anykernel.sh
+
+          if [ -f kernel/out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
+          elif [ -f kernel/out/arch/arm64/boot/Image ]; then
+            cp kernel/out/arch/arm64/boot/Image AnyKernel3/Image
+          fi
+
+          cd AnyKernel3
+          zip -r9 ../VoltageOS-fogos-KSU-Next-LZ4.zip * -x .git README.md
+
+      - name: Upload Flashable Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoltageOS-fogos-KSU-Next-LZ4
+          path: VoltageOS-fogos-KSU-Next-LZ4.zip
+          retention-days: 14
