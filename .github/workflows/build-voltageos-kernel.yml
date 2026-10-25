@@ -55,12 +55,25 @@ jobs:
       - name: Inject KernelSU-Next & SuSFS
         run: |
           cd kernel
-          # Setup KernelSU-Next with specified branch (passing branch to bash -s)
+          # Setup KernelSU-Next with specified branch
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/${{ github.event.inputs.ksu_branch }}/kernel/setup.sh" | bash -s "${{ github.event.inputs.ksu_branch }}"
 
-          # Fix Linux 5.4 header compatibility: replace <linux/pgtable.h> with <asm/pgtable.h> if present
+          # Fix Linux 5.4 header compatibility: replace <linux/pgtable.h> with <asm/pgtable.h>
           if [ -d drivers/kernelsu ]; then
             grep -rl "<linux/pgtable.h>" drivers/kernelsu/ | xargs sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' 2>/dev/null || true
+            # Fix strncpy_from_user_nofault for Linux 5.4
+            find drivers/kernelsu -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' {} +
+          fi
+
+          # Backport strncpy_from_user_nofault into include/linux/uaccess.h if missing
+          if ! grep -q "strncpy_from_user_nofault" include/linux/uaccess.h; then
+            cat << 'EOF' >> include/linux/uaccess.h
+
+static inline long strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr, long count)
+{
+    return strncpy_from_user(dst, (const char __user *)unsafe_addr, count);
+}
+EOF
           fi
 
           # Setup SuSFS Stealth Layer (kernel-5.4 branch)
