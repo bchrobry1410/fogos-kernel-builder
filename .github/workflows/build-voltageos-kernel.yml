@@ -61,19 +61,12 @@ jobs:
           # Fix Linux 5.4 header compatibility: replace <linux/pgtable.h> with <asm/pgtable.h>
           if [ -d drivers/kernelsu ]; then
             grep -rl "<linux/pgtable.h>" drivers/kernelsu/ | xargs sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' 2>/dev/null || true
-            # Fix strncpy_from_user_nofault for Linux 5.4
             find drivers/kernelsu -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' {} +
           fi
 
           # Backport strncpy_from_user_nofault into include/linux/uaccess.h if missing
           if ! grep -q "strncpy_from_user_nofault" include/linux/uaccess.h; then
-            cat << 'EOF' >> include/linux/uaccess.h
-
-static inline long strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr, long count)
-{
-    return strncpy_from_user(dst, (const char __user *)unsafe_addr, count);
-}
-EOF
+            printf '\nstatic inline long strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr, long count)\n{\n    return strncpy_from_user(dst, (const char __user *)unsafe_addr, count);\n}\n' >> include/linux/uaccess.h
           fi
 
           # Setup SuSFS Stealth Layer (kernel-5.4 branch)
@@ -93,32 +86,7 @@ EOF
           [ ! -f "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/moto-holi-fogos.config"
           [ ! -f "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/holi-perf_defconfig"
 
-          cat << 'EOF' >> "$DEFCONFIG"
-          # Networking: Google BBR & WireGuard
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_DEFAULT_BBR=y
-          CONFIG_WIREGUARD=y
-
-          # Memory: LZ4 for ZRAM
-          CONFIG_ZRAM=y
-          CONFIG_CRYPTO_LZ4=y
-          CONFIG_LZ4_COMPRESS=y
-          CONFIG_LZ4_DECOMPRESS=y
-          CONFIG_ZRAM_DEF_COMP_LZ4=y
-
-          # Optimization: Full LTO
-          CONFIG_LTO=y
-          CONFIG_LTO_CLANG=y
-          CONFIG_LTO_CLANG_FULL=y
-          # CONFIG_LTO_CLANG_THIN is not set
-
-          # Filesystems: EROFS Optimization & OverlayFS
-          CONFIG_OVERLAY_FS=y
-          CONFIG_EROFS_FS=y
-          CONFIG_EROFS_FS_ZIP=y
-          CONFIG_EROFS_FS_LZ4=y
-          CONFIG_EROFS_FS_PCPU_KTHREAD=y
-          EOF
+          printf '\nCONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_BBR=y\nCONFIG_WIREGUARD=y\nCONFIG_ZRAM=y\nCONFIG_CRYPTO_LZ4=y\nCONFIG_LZ4_COMPRESS=y\nCONFIG_LZ4_DECOMPRESS=y\nCONFIG_ZRAM_DEF_COMP_LZ4=y\nCONFIG_LTO=y\nCONFIG_LTO_CLANG=y\nCONFIG_LTO_CLANG_FULL=y\nCONFIG_OVERLAY_FS=y\nCONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_EROFS_FS_LZ4=y\nCONFIG_EROFS_FS_PCPU_KTHREAD=y\n' >> "$DEFCONFIG"
 
       - name: Compile VoltageOS Kernel
         run: |
