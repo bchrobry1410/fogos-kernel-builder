@@ -55,8 +55,13 @@ jobs:
       - name: Inject KernelSU-Next & SuSFS
         run: |
           cd kernel
-          # Setup KernelSU-Next
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/${{ github.event.inputs.ksu_branch }}/kernel/setup.sh" | bash -
+          # Setup KernelSU-Next with specified branch (passing branch to bash -s)
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/${{ github.event.inputs.ksu_branch }}/kernel/setup.sh" | bash -s "${{ github.event.inputs.ksu_branch }}"
+
+          # Fix Linux 5.4 header compatibility: replace <linux/pgtable.h> with <asm/pgtable.h> if present
+          if [ -d drivers/kernelsu ]; then
+            grep -rl "<linux/pgtable.h>" drivers/kernelsu/ | xargs sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' 2>/dev/null || true
+          fi
 
           # Setup SuSFS Stealth Layer (kernel-5.4 branch)
           if [ "${{ github.event.inputs.enable_susfs }}" = "true" ]; then
