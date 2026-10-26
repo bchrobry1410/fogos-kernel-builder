@@ -58,15 +58,10 @@ jobs:
           # Setup KernelSU-Next with specified branch
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/${{ github.event.inputs.ksu_branch }}/kernel/setup.sh" | bash -s "${{ github.event.inputs.ksu_branch }}"
 
-          # Fix Linux 5.4 header compatibility: replace <linux/pgtable.h> with <asm/pgtable.h>
+          # Fix Linux 5.4 header and function compatibility in KernelSU
           if [ -d drivers/kernelsu ]; then
             grep -rl "<linux/pgtable.h>" drivers/kernelsu/ | xargs sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' 2>/dev/null || true
             find drivers/kernelsu -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' {} +
-          fi
-
-          # Backport strncpy_from_user_nofault into include/linux/uaccess.h if missing
-          if ! grep -q "strncpy_from_user_nofault" include/linux/uaccess.h; then
-            printf '\nstatic inline long strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr, long count)\n{\n    return strncpy_from_user(dst, (const char __user *)unsafe_addr, count);\n}\n' >> include/linux/uaccess.h
           fi
 
           # Setup SuSFS Stealth Layer (kernel-5.4 branch)
